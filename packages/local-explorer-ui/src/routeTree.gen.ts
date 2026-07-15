@@ -17,8 +17,12 @@ import { Route as DoClassNameRouteImport } from './routes/do/$className'
 import { Route as D1DatabaseIdRouteImport } from './routes/d1/$databaseId'
 import { Route as WorkflowsWorkflowNameIndexRouteImport } from './routes/workflows/$workflowName/index'
 import { Route as R2BucketNameIndexRouteImport } from './routes/r2/$bucketName/index'
+import { Route as EmailSendingIndexRouteImport } from './routes/email/sending/index'
+import { Route as EmailRoutingIndexRouteImport } from './routes/email/routing/index'
 import { Route as DoClassNameIndexRouteImport } from './routes/do/$className/index'
 import { Route as WorkflowsWorkflowNameInstanceIdRouteImport } from './routes/workflows/$workflowName/$instanceId'
+import { Route as EmailSendingIdRouteImport } from './routes/email/sending/$id'
+import { Route as EmailRoutingIdRouteImport } from './routes/email/routing/$id'
 import { Route as DoClassNameObjectIdRouteImport } from './routes/do/$className/$objectId'
 import { Route as R2BucketNameObjectSplatRouteImport } from './routes/r2/$bucketName/object.$'
 
@@ -63,6 +67,16 @@ const R2BucketNameIndexRoute = R2BucketNameIndexRouteImport.update({
   path: '/',
   getParentRoute: () => R2BucketNameRoute,
 } as any)
+const EmailSendingIndexRoute = EmailSendingIndexRouteImport.update({
+  id: '/email/sending/',
+  path: '/email/sending/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const EmailRoutingIndexRoute = EmailRoutingIndexRouteImport.update({
+  id: '/email/routing/',
+  path: '/email/routing/',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const DoClassNameIndexRoute = DoClassNameIndexRouteImport.update({
   id: '/',
   path: '/',
@@ -74,6 +88,16 @@ const WorkflowsWorkflowNameInstanceIdRoute =
     path: '/$instanceId',
     getParentRoute: () => WorkflowsWorkflowNameRoute,
   } as any)
+const EmailSendingIdRoute = EmailSendingIdRouteImport.update({
+  id: '/email/sending/$id',
+  path: '/email/sending/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const EmailRoutingIdRoute = EmailRoutingIdRouteImport.update({
+  id: '/email/routing/$id',
+  path: '/email/routing/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const DoClassNameObjectIdRoute = DoClassNameObjectIdRouteImport.update({
   id: '/$objectId',
   path: '/$objectId',
@@ -93,8 +117,12 @@ export interface FileRoutesByFullPath {
   '/r2/$bucketName': typeof R2BucketNameRouteWithChildren
   '/workflows/$workflowName': typeof WorkflowsWorkflowNameRouteWithChildren
   '/do/$className/$objectId': typeof DoClassNameObjectIdRoute
+  '/email/routing/$id': typeof EmailRoutingIdRoute
+  '/email/sending/$id': typeof EmailSendingIdRoute
   '/workflows/$workflowName/$instanceId': typeof WorkflowsWorkflowNameInstanceIdRoute
   '/do/$className/': typeof DoClassNameIndexRoute
+  '/email/routing/': typeof EmailRoutingIndexRoute
+  '/email/sending/': typeof EmailSendingIndexRoute
   '/r2/$bucketName/': typeof R2BucketNameIndexRoute
   '/workflows/$workflowName/': typeof WorkflowsWorkflowNameIndexRoute
   '/r2/$bucketName/object/$': typeof R2BucketNameObjectSplatRoute
@@ -104,8 +132,12 @@ export interface FileRoutesByTo {
   '/d1/$databaseId': typeof D1DatabaseIdRoute
   '/kv/$namespaceId': typeof KvNamespaceIdRoute
   '/do/$className/$objectId': typeof DoClassNameObjectIdRoute
+  '/email/routing/$id': typeof EmailRoutingIdRoute
+  '/email/sending/$id': typeof EmailSendingIdRoute
   '/workflows/$workflowName/$instanceId': typeof WorkflowsWorkflowNameInstanceIdRoute
   '/do/$className': typeof DoClassNameIndexRoute
+  '/email/routing': typeof EmailRoutingIndexRoute
+  '/email/sending': typeof EmailSendingIndexRoute
   '/r2/$bucketName': typeof R2BucketNameIndexRoute
   '/workflows/$workflowName': typeof WorkflowsWorkflowNameIndexRoute
   '/r2/$bucketName/object/$': typeof R2BucketNameObjectSplatRoute
@@ -119,8 +151,12 @@ export interface FileRoutesById {
   '/r2/$bucketName': typeof R2BucketNameRouteWithChildren
   '/workflows/$workflowName': typeof WorkflowsWorkflowNameRouteWithChildren
   '/do/$className/$objectId': typeof DoClassNameObjectIdRoute
+  '/email/routing/$id': typeof EmailRoutingIdRoute
+  '/email/sending/$id': typeof EmailSendingIdRoute
   '/workflows/$workflowName/$instanceId': typeof WorkflowsWorkflowNameInstanceIdRoute
   '/do/$className/': typeof DoClassNameIndexRoute
+  '/email/routing/': typeof EmailRoutingIndexRoute
+  '/email/sending/': typeof EmailSendingIndexRoute
   '/r2/$bucketName/': typeof R2BucketNameIndexRoute
   '/workflows/$workflowName/': typeof WorkflowsWorkflowNameIndexRoute
   '/r2/$bucketName/object/$': typeof R2BucketNameObjectSplatRoute
@@ -135,8 +171,12 @@ export interface FileRouteTypes {
     | '/r2/$bucketName'
     | '/workflows/$workflowName'
     | '/do/$className/$objectId'
+    | '/email/routing/$id'
+    | '/email/sending/$id'
     | '/workflows/$workflowName/$instanceId'
     | '/do/$className/'
+    | '/email/routing/'
+    | '/email/sending/'
     | '/r2/$bucketName/'
     | '/workflows/$workflowName/'
     | '/r2/$bucketName/object/$'
@@ -146,8 +186,12 @@ export interface FileRouteTypes {
     | '/d1/$databaseId'
     | '/kv/$namespaceId'
     | '/do/$className/$objectId'
+    | '/email/routing/$id'
+    | '/email/sending/$id'
     | '/workflows/$workflowName/$instanceId'
     | '/do/$className'
+    | '/email/routing'
+    | '/email/sending'
     | '/r2/$bucketName'
     | '/workflows/$workflowName'
     | '/r2/$bucketName/object/$'
@@ -160,8 +204,12 @@ export interface FileRouteTypes {
     | '/r2/$bucketName'
     | '/workflows/$workflowName'
     | '/do/$className/$objectId'
+    | '/email/routing/$id'
+    | '/email/sending/$id'
     | '/workflows/$workflowName/$instanceId'
     | '/do/$className/'
+    | '/email/routing/'
+    | '/email/sending/'
     | '/r2/$bucketName/'
     | '/workflows/$workflowName/'
     | '/r2/$bucketName/object/$'
@@ -174,6 +222,10 @@ export interface RootRouteChildren {
   KvNamespaceIdRoute: typeof KvNamespaceIdRoute
   R2BucketNameRoute: typeof R2BucketNameRouteWithChildren
   WorkflowsWorkflowNameRoute: typeof WorkflowsWorkflowNameRouteWithChildren
+  EmailRoutingIdRoute: typeof EmailRoutingIdRoute
+  EmailSendingIdRoute: typeof EmailSendingIdRoute
+  EmailRoutingIndexRoute: typeof EmailRoutingIndexRoute
+  EmailSendingIndexRoute: typeof EmailSendingIndexRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -234,6 +286,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof R2BucketNameIndexRouteImport
       parentRoute: typeof R2BucketNameRoute
     }
+    '/email/sending/': {
+      id: '/email/sending/'
+      path: '/email/sending'
+      fullPath: '/email/sending/'
+      preLoaderRoute: typeof EmailSendingIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/email/routing/': {
+      id: '/email/routing/'
+      path: '/email/routing'
+      fullPath: '/email/routing/'
+      preLoaderRoute: typeof EmailRoutingIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/do/$className/': {
       id: '/do/$className/'
       path: '/'
@@ -247,6 +313,20 @@ declare module '@tanstack/react-router' {
       fullPath: '/workflows/$workflowName/$instanceId'
       preLoaderRoute: typeof WorkflowsWorkflowNameInstanceIdRouteImport
       parentRoute: typeof WorkflowsWorkflowNameRoute
+    }
+    '/email/sending/$id': {
+      id: '/email/sending/$id'
+      path: '/email/sending/$id'
+      fullPath: '/email/sending/$id'
+      preLoaderRoute: typeof EmailSendingIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/email/routing/$id': {
+      id: '/email/routing/$id'
+      path: '/email/routing/$id'
+      fullPath: '/email/routing/$id'
+      preLoaderRoute: typeof EmailRoutingIdRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/do/$className/$objectId': {
       id: '/do/$className/$objectId'
@@ -315,6 +395,10 @@ const rootRouteChildren: RootRouteChildren = {
   KvNamespaceIdRoute: KvNamespaceIdRoute,
   R2BucketNameRoute: R2BucketNameRouteWithChildren,
   WorkflowsWorkflowNameRoute: WorkflowsWorkflowNameRouteWithChildren,
+  EmailRoutingIdRoute: EmailRoutingIdRoute,
+  EmailSendingIdRoute: EmailSendingIdRoute,
+  EmailRoutingIndexRoute: EmailRoutingIndexRoute,
+  EmailSendingIndexRoute: EmailSendingIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

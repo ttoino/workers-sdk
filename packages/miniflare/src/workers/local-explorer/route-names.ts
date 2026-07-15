@@ -28,6 +28,12 @@ const ROUTE_PATTERNS: [RegExp, string][] = [
 	[/^\/workflows\/[^/]+\/instances$/, "workflows.instances"],
 	[/^\/workflows\/[^/]+$/, "workflows.details"],
 	[/^\/workflows$/, "workflows.list"],
+	[/^\/email\/[^/]+\/routing$/, "email.routing"],
+	[/^\/email\/[^/]+\/sending$/, "email.sending"],
+	[/^\/email\/[^/]+\/messages\/[^/]+$/, "email.message"],
+	[/^\/email\/[^/]+\/raw$/, "email.raw"],
+	[/^\/email\/[^/]+\/send$/, "email.send"],
+	[/^\/email\/[^/]+$/, "email.activity"],
 	[/^\/local\/workers$/, "local.workers"],
 ];
 

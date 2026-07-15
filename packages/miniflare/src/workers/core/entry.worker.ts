@@ -20,6 +20,7 @@ type Env = {
 	[CoreBindings.TEXT_UPSTREAM_URL]?: string;
 	[CoreBindings.JSON_CF_BLOB]: IncomingRequestCfProperties;
 	[CoreBindings.JSON_ROUTES]: WorkerRoute[];
+	[CoreBindings.JSON_FALLBACK_WORKER_NAME]: string | null;
 	[CoreBindings.JSON_LOG_LEVEL]: LogLevel;
 	[CoreBindings.DATA_LIVE_RELOAD_SCRIPT]?: ArrayBuffer;
 	[CoreBindings.DURABLE_OBJECT_NAMESPACE_PROXY]: DurableObjectNamespace;
@@ -137,15 +138,30 @@ function getUserRequest(
 
 function getTargetService(request: Request, url: URL, env: Env) {
 	let service: Fetcher | undefined = env[CoreBindings.SERVICE_USER_FALLBACK];
+	// The matched route target is the handling Worker's name. It's undefined
+	// when falling back to the default user Worker (no matching route).
+	let name: string | undefined = undefined;
 
 	const override = request.headers.get(CoreHeaders.ROUTE_OVERRIDE);
 	request.headers.delete(CoreHeaders.ROUTE_OVERRIDE);
 
 	const route = override ?? matchRoutes(env[CoreBindings.JSON_ROUTES], url);
 	if (route !== null) {
-		service = env[`${CoreBindings.SERVICE_USER_ROUTE_PREFIX}${route}`];
+		const routedService =
+			env[`${CoreBindings.SERVICE_USER_ROUTE_PREFIX}${route}`];
+		// The default Worker has no dedicated route service, so an override
+		// targeting it falls back to the default service while still attributing
+		// activity to the named Worker.
+		if (routedService !== undefined) {
+			service = routedService;
+		}
+		name = route;
+	} else {
+		// No route matched, so we fall back to the default Worker. Attribute
+		// activity (e.g. email routing) to it by its plain name.
+		name = env[CoreBindings.JSON_FALLBACK_WORKER_NAME] ?? undefined;
 	}
-	return service;
+	return { service, name };
 }
 
 const LOCALHOST_HOSTNAMES = ["localhost", "127.0.0.1", "[::1]"];
@@ -535,7 +551,11 @@ export default <ExportedHandler<Env>>{
 			throw e;
 		}
 		const url = new URL(request.url);
-		const service = getTargetService(request, url, env);
+		const { service, name: targetWorkerName } = getTargetService(
+			request,
+			url,
+			env
+		);
 		if (service === undefined) {
 			return new Response("No entrypoint worker found", { status: 404 });
 		}
@@ -585,7 +605,8 @@ export default <ExportedHandler<Env>>{
 						request,
 						service,
 						env,
-						ctx
+						ctx,
+						targetWorkerName
 					);
 				}
 

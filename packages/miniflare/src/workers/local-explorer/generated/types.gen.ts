@@ -607,6 +607,26 @@ export type LocalExplorerWorkerBindings = {
 	 * Workflow bindings
 	 */
 	workflows?: Array<LocalExplorerWorkflowBinding>;
+	email?: LocalExplorerEmailBindings;
+};
+
+/**
+ * Email capabilities available for a worker
+ */
+export type LocalExplorerEmailBindings = {
+	/**
+	 * Whether inbound (routing) email activity can be viewed. Always true — any worker can be an email route target locally.
+	 */
+	routing: boolean;
+	/**
+	 * One entry per send_email binding declared on the worker. Empty when the worker cannot send email.
+	 */
+	sending: Array<{
+		/**
+		 * Name of the send_email binding in the worker's env.
+		 */
+		bindingName: string;
+	}>;
 };
 
 export type LocalExplorerResourceBinding = {
@@ -768,6 +788,75 @@ export type WorkflowsInstanceDetails = {
 		name?: string;
 		message?: string;
 	};
+};
+
+/**
+ * A single incoming (routing) email activity event.
+ */
+export type EmailRoutingActivityRecord = {
+	id: string;
+	/**
+	 * ISO 8601 timestamp assigned when the event was recorded.
+	 */
+	datetime: string;
+	direction: "routing";
+	/**
+	 * Envelope MAIL FROM address.
+	 */
+	from: string;
+	/**
+	 * Envelope RCPT TO address.
+	 */
+	to: string;
+	subject: string;
+	/**
+	 * Routing action. `unknown` is a worker-initiated forward()/reply().
+	 */
+	action: "forward" | "worker" | "drop" | "unknown";
+	/**
+	 * Name of the Worker that handled the message.
+	 */
+	worker: string;
+	status: "delivered" | "dropped" | "deliveryFailed" | "error";
+	messageId?: string;
+	errorDetail?: string;
+	/**
+	 * 0 | 1 — non-delivery report. Always 0 locally.
+	 */
+	isNDR: number;
+	/**
+	 * 0 | 1 — marks the terminal event of a message lifecycle.
+	 */
+	isLastEvent: number;
+};
+
+/**
+ * A single outgoing (sending) email activity event, one per recipient.
+ */
+export type EmailSendingActivityRecord = {
+	id: string;
+	/**
+	 * ISO 8601 timestamp assigned when the event was recorded.
+	 */
+	datetime: string;
+	direction: "sending";
+	from: string;
+	/**
+	 * The single envelope recipient for this event.
+	 */
+	envelopeTos: string;
+	subject: string;
+	status: "delivered" | "error";
+	messageId?: string;
+	errorDetail?: string;
+	/**
+	 * 0 | 1 — non-delivery report. Always 0 locally.
+	 */
+	isNDR: number;
+	/**
+	 * 0 | 1 — marks the terminal event of a message lifecycle.
+	 */
+	isLastEvent: number;
 };
 
 export type R2ResultInfoWritable = {
@@ -1816,3 +1905,200 @@ export type WorkflowsSendInstanceEventResponses = {
 
 export type WorkflowsSendInstanceEventResponse =
 	WorkflowsSendInstanceEventResponses[keyof WorkflowsSendInstanceEventResponses];
+
+export type EmailListRoutingActivityData = {
+	body?: never;
+	path: {
+		worker: string;
+	};
+	query?: never;
+	url: "/email/{worker}/routing";
+};
+
+export type EmailListRoutingActivityErrors = {
+	/**
+	 * List routing activity failure.
+	 */
+	"4XX": WorkersApiResponseCommonFailure;
+};
+
+export type EmailListRoutingActivityError =
+	EmailListRoutingActivityErrors[keyof EmailListRoutingActivityErrors];
+
+export type EmailListRoutingActivityResponses = {
+	/**
+	 * List routing activity response.
+	 */
+	200: WorkersApiResponseCommon & {
+		result?: Array<EmailRoutingActivityRecord>;
+	};
+};
+
+export type EmailListRoutingActivityResponse =
+	EmailListRoutingActivityResponses[keyof EmailListRoutingActivityResponses];
+
+export type EmailListSendingActivityData = {
+	body?: never;
+	path: {
+		worker: string;
+	};
+	query?: never;
+	url: "/email/{worker}/sending";
+};
+
+export type EmailListSendingActivityErrors = {
+	/**
+	 * List sending activity failure.
+	 */
+	"4XX": WorkersApiResponseCommonFailure;
+};
+
+export type EmailListSendingActivityError =
+	EmailListSendingActivityErrors[keyof EmailListSendingActivityErrors];
+
+export type EmailListSendingActivityResponses = {
+	/**
+	 * List sending activity response.
+	 */
+	200: WorkersApiResponseCommon & {
+		result?: Array<EmailSendingActivityRecord>;
+	};
+};
+
+export type EmailListSendingActivityResponse =
+	EmailListSendingActivityResponses[keyof EmailListSendingActivityResponses];
+
+export type EmailGetMessageData = {
+	body?: never;
+	path: {
+		worker: string;
+		id: string;
+	};
+	query?: never;
+	url: "/email/{worker}/messages/{id}";
+};
+
+export type EmailGetMessageErrors = {
+	/**
+	 * Get message failure.
+	 */
+	"4XX": WorkersApiResponseCommonFailure;
+};
+
+export type EmailGetMessageError =
+	EmailGetMessageErrors[keyof EmailGetMessageErrors];
+
+export type EmailGetMessageResponses = {
+	/**
+	 * Get message response.
+	 */
+	200: WorkersApiResponseCommon & {
+		result?: EmailRoutingActivityRecord | EmailSendingActivityRecord;
+	};
+};
+
+export type EmailGetMessageResponse =
+	EmailGetMessageResponses[keyof EmailGetMessageResponses];
+
+export type EmailGetRawData = {
+	body?: never;
+	path: {
+		worker: string;
+	};
+	query: {
+		/**
+		 * The message id of the email to fetch.
+		 */
+		messageId: string;
+	};
+	url: "/email/{worker}/raw";
+};
+
+export type EmailGetRawErrors = {
+	/**
+	 * Get raw email failure.
+	 */
+	"4XX": WorkersApiResponseCommonFailure;
+};
+
+export type EmailGetRawError = EmailGetRawErrors[keyof EmailGetRawErrors];
+
+export type EmailGetRawResponses = {
+	/**
+	 * The raw email message.
+	 */
+	200: string;
+};
+
+export type EmailGetRawResponse =
+	EmailGetRawResponses[keyof EmailGetRawResponses];
+
+export type EmailSendTestData = {
+	body: {
+		/**
+		 * The complete RFC 5322 message. Capped at 1 MiB locally. The envelope MAIL FROM / RCPT TO addresses are derived from the message's From and To headers.
+		 */
+		raw: string;
+	};
+	path: {
+		worker: string;
+	};
+	query?: never;
+	url: "/email/{worker}/send";
+};
+
+export type EmailSendTestErrors = {
+	/**
+	 * Send test email failure.
+	 */
+	"4XX": WorkersApiResponseCommonFailure;
+};
+
+export type EmailSendTestError = EmailSendTestErrors[keyof EmailSendTestErrors];
+
+export type EmailSendTestResponses = {
+	/**
+	 * Send test email response.
+	 */
+	200: WorkersApiResponseCommon & {
+		result?: {
+			message: string;
+		};
+	};
+};
+
+export type EmailSendTestResponse =
+	EmailSendTestResponses[keyof EmailSendTestResponses];
+
+export type EmailDeleteActivityData = {
+	body?: never;
+	path: {
+		worker: string;
+	};
+	query?: never;
+	url: "/email/{worker}";
+};
+
+export type EmailDeleteActivityErrors = {
+	/**
+	 * Delete activity failure.
+	 */
+	"4XX": WorkersApiResponseCommonFailure;
+};
+
+export type EmailDeleteActivityError =
+	EmailDeleteActivityErrors[keyof EmailDeleteActivityErrors];
+
+export type EmailDeleteActivityResponses = {
+	/**
+	 * Delete activity response.
+	 */
+	200: WorkersApiResponseCommon & {
+		result?: {
+			deleted: boolean;
+		};
+	};
+};
+
+export type EmailDeleteActivityResponse =
+	EmailDeleteActivityResponses[keyof EmailDeleteActivityResponses];

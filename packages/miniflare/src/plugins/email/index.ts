@@ -7,6 +7,7 @@ import {
 	getUserBindingServiceName,
 	remoteProxyClientWorker,
 	ProxyNodeBinding,
+	WORKER_BINDING_SERVICE_LOOPBACK,
 } from "../shared";
 import type { Service, Worker_Binding } from "../../runtime";
 import type { Plugin, RemoteProxyConnectionString } from "../shared";
@@ -100,6 +101,10 @@ export const EMAIL_PLUGIN: Plugin<typeof EmailOptionsSchema> = {
 			},
 		];
 
+		// Name of the Worker owning these `send_email` bindings, used to scope the
+		// local explorer's sending activity log.
+		const workerName = args.workerNames[args.workerIndex];
+
 		for (const { name, remoteProxyConnectionString, ...config } of args.options
 			.email?.send_email ?? []) {
 			services.push({
@@ -123,6 +128,11 @@ export const EMAIL_PLUGIN: Plugin<typeof EmailOptionsSchema> = {
 								{
 									name: "email_directory",
 									json: JSON.stringify(emailDirectory),
+								},
+								WORKER_BINDING_SERVICE_LOOPBACK,
+								{
+									name: "MINIFLARE_EMAIL_WORKER_NAME",
+									json: JSON.stringify(workerName),
 								},
 							],
 						},

@@ -402,6 +402,18 @@ export const zDoRawQueryResult = z.object({
 		.optional(),
 });
 
+/**
+ * Email capabilities available for a worker
+ */
+export const zLocalExplorerEmailBindings = z.object({
+	routing: z.boolean(),
+	sending: z.array(
+		z.object({
+			bindingName: z.string(),
+		})
+	),
+});
+
 export const zLocalExplorerResourceBinding = z.object({
 	id: z.string(),
 	bindingName: z.string(),
@@ -431,6 +443,7 @@ export const zLocalExplorerWorkerBindings = z.object({
 	r2: z.array(zLocalExplorerResourceBinding).optional(),
 	do: z.array(zLocalExplorerDoBinding).optional(),
 	workflows: z.array(zLocalExplorerWorkflowBinding).optional(),
+	email: zLocalExplorerEmailBindings.optional(),
 });
 
 export const zLocalExplorerWorker = z.object({
@@ -509,6 +522,42 @@ export const zWorkflowsInstanceDetails = z.object({
 			message: z.string().optional(),
 		})
 		.optional(),
+});
+
+/**
+ * A single incoming (routing) email activity event.
+ */
+export const zEmailRoutingActivityRecord = z.object({
+	id: z.string(),
+	datetime: z.string(),
+	direction: z.enum(["routing"]),
+	from: z.string(),
+	to: z.string(),
+	subject: z.string(),
+	action: z.enum(["forward", "worker", "drop", "unknown"]),
+	worker: z.string(),
+	status: z.enum(["delivered", "dropped", "deliveryFailed", "error"]),
+	messageId: z.string().optional(),
+	errorDetail: z.string().optional(),
+	isNDR: z.number().int(),
+	isLastEvent: z.number().int(),
+});
+
+/**
+ * A single outgoing (sending) email activity event, one per recipient.
+ */
+export const zEmailSendingActivityRecord = z.object({
+	id: z.string(),
+	datetime: z.string(),
+	direction: z.enum(["sending"]),
+	from: z.string(),
+	envelopeTos: z.string(),
+	subject: z.string(),
+	status: z.enum(["delivered", "error"]),
+	messageId: z.string().optional(),
+	errorDetail: z.string().optional(),
+	isNDR: z.number().int(),
+	isLastEvent: z.number().int(),
 });
 
 export const zR2ResultInfoWritable = z.record(z.unknown());
@@ -1126,3 +1175,116 @@ export const zWorkflowsSendInstanceEventData = z.object({
  * Send Event response.
  */
 export const zWorkflowsSendInstanceEventResponse = zWorkersApiResponseCommon;
+
+export const zEmailListRoutingActivityData = z.object({
+	body: z.never().optional(),
+	path: z.object({
+		worker: z.string(),
+	}),
+	query: z.never().optional(),
+});
+
+/**
+ * List routing activity response.
+ */
+export const zEmailListRoutingActivityResponse = zWorkersApiResponseCommon.and(
+	z.object({
+		result: z.array(zEmailRoutingActivityRecord).optional(),
+	})
+);
+
+export const zEmailListSendingActivityData = z.object({
+	body: z.never().optional(),
+	path: z.object({
+		worker: z.string(),
+	}),
+	query: z.never().optional(),
+});
+
+/**
+ * List sending activity response.
+ */
+export const zEmailListSendingActivityResponse = zWorkersApiResponseCommon.and(
+	z.object({
+		result: z.array(zEmailSendingActivityRecord).optional(),
+	})
+);
+
+export const zEmailGetMessageData = z.object({
+	body: z.never().optional(),
+	path: z.object({
+		worker: z.string(),
+		id: z.string(),
+	}),
+	query: z.never().optional(),
+});
+
+/**
+ * Get message response.
+ */
+export const zEmailGetMessageResponse = zWorkersApiResponseCommon.and(
+	z.object({
+		result: z
+			.union([zEmailRoutingActivityRecord, zEmailSendingActivityRecord])
+			.optional(),
+	})
+);
+
+export const zEmailGetRawData = z.object({
+	body: z.never().optional(),
+	path: z.object({
+		worker: z.string(),
+	}),
+	query: z.object({
+		messageId: z.string(),
+	}),
+});
+
+/**
+ * The raw email message.
+ */
+export const zEmailGetRawResponse = z.string();
+
+export const zEmailSendTestData = z.object({
+	body: z.object({
+		raw: z.string(),
+	}),
+	path: z.object({
+		worker: z.string(),
+	}),
+	query: z.never().optional(),
+});
+
+/**
+ * Send test email response.
+ */
+export const zEmailSendTestResponse = zWorkersApiResponseCommon.and(
+	z.object({
+		result: z
+			.object({
+				message: z.string(),
+			})
+			.optional(),
+	})
+);
+
+export const zEmailDeleteActivityData = z.object({
+	body: z.never().optional(),
+	path: z.object({
+		worker: z.string(),
+	}),
+	query: z.never().optional(),
+});
+
+/**
+ * Delete activity response.
+ */
+export const zEmailDeleteActivityResponse = zWorkersApiResponseCommon.and(
+	z.object({
+		result: z
+			.object({
+				deleted: z.boolean(),
+			})
+			.optional(),
+	})
+);

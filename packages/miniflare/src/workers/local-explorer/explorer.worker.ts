@@ -12,6 +12,7 @@ import {
 	zD1RawDatabaseQueryData,
 	zDurableObjectsNamespaceListObjectsData,
 	zDurableObjectsNamespaceQuerySqliteData,
+	zEmailSendTestData,
 	zR2BucketDeleteObjectsData,
 	zR2BucketListObjectsData,
 	zWorkersKvNamespaceGetMultipleKeyValuePairsData,
@@ -23,6 +24,13 @@ import {
 import openApiSpec from "./openapi.local.json";
 import { listD1Databases, rawD1Database } from "./resources/d1";
 import { listDONamespaces, listDOObjects, queryDOSqlite } from "./resources/do";
+import {
+	deleteEmailActivity,
+	getEmailMessage,
+	getEmailRaw,
+	listEmailActivity,
+	sendTestEmail,
+} from "./resources/email";
 import {
 	bulkGetKVValues,
 	deleteKVValue,
@@ -73,6 +81,8 @@ export type Env = {
 	[CoreBindings.JSON_EXPLORER_WORKER_OPTS]: ExplorerWorkerOpts;
 	[CoreBindings.JSON_TELEMETRY_CONFIG]: { enabled: boolean; deviceId?: string };
 	[CoreBindings.DEV_REGISTRY_DEBUG_PORT]: WorkerdDebugPortConnector;
+	// Entry service, used to dispatch test emails via /cdn-cgi/handler/email.
+	[CoreBindings.EXPLORER_ENTRY_SERVICE]: Fetcher;
 };
 
 export type AppBindings = { Bindings: Env };
@@ -347,6 +357,40 @@ app.delete("/api/workflows/:workflow_name/instances/:instance_id", (c) =>
 		c.req.param("workflow_name"),
 		c.req.param("instance_id")
 	)
+);
+
+// ============================================================================
+// Email Endpoints
+// ============================================================================
+
+app.get("/api/email/:worker/routing", (c) =>
+	listEmailActivity(c, c.req.param("worker"), "routing")
+);
+
+app.get("/api/email/:worker/sending", (c) =>
+	listEmailActivity(c, c.req.param("worker"), "sending")
+);
+
+app.get("/api/email/:worker/messages/:id", (c) =>
+	getEmailMessage(c, c.req.param("worker"), c.req.param("id"))
+);
+
+app.get("/api/email/:worker/raw", (c) => {
+	const messageId = c.req.query("messageId");
+	if (!messageId) {
+		return errorResponse(400, 10001, "messageId query parameter is required");
+	}
+	return getEmailRaw(c, c.req.param("worker"), messageId);
+});
+
+app.post(
+	"/api/email/:worker/send",
+	validateRequestBody(zEmailSendTestData.shape.body),
+	(c) => sendTestEmail(c, c.req.param("worker"), c.req.valid("json"))
+);
+
+app.delete("/api/email/:worker", (c) =>
+	deleteEmailActivity(c, c.req.param("worker"))
 );
 
 // ============================================================================

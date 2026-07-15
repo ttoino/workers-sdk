@@ -1,7 +1,14 @@
 const GROUPS_STORAGE_KEY = "local-explorer.sidebar.groups.v1";
 const OPEN_STORAGE_KEY = "local-explorer.sidebar.open.v1";
 
-export const SIDEBAR_GROUP_IDS = ["d1", "do", "kv", "r2", "workflows"] as const;
+export const SIDEBAR_GROUP_IDS = [
+	"d1",
+	"do",
+	"kv",
+	"r2",
+	"workflows",
+	"email",
+] as const;
 
 export type SidebarGroupId = (typeof SIDEBAR_GROUP_IDS)[number];
 
@@ -13,6 +20,7 @@ export const DEFAULT_GROUP_STATE: SidebarGroupState = {
 	kv: true,
 	r2: true,
 	workflows: true,
+	email: true,
 };
 
 /**

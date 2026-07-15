@@ -1284,6 +1284,351 @@ const config = {
 						tags: ["Workflows"],
 					},
 				},
+			// Email activity log (local-only; no public Cloudflare API).
+			// Record shapes mirror the production emailRoutingAdaptive /
+			// emailSendingAdaptive GraphQL rows, minus fields with no local source.
+			"/email/{worker}/routing": {
+				get: {
+					description:
+						"List incoming (routing) email activity for a Worker, newest first.",
+					operationId: "email-list-routing-activity",
+					parameters: [
+						{
+							in: "path",
+							name: "worker",
+							required: true,
+							schema: { type: "string" },
+						},
+					],
+					responses: {
+						"200": {
+							content: {
+								"application/json": {
+									schema: {
+										allOf: [
+											{
+												$ref: "#/components/schemas/workers_api-response-common",
+											},
+											{
+												properties: {
+													result: {
+														type: "array",
+														items: {
+															$ref: "#/components/schemas/email_routing-activity-record",
+														},
+													},
+												},
+												type: "object",
+											},
+										],
+									},
+								},
+							},
+							description: "List routing activity response.",
+						},
+						"4XX": {
+							content: {
+								"application/json": {
+									schema: {
+										$ref: "#/components/schemas/workers_api-response-common-failure",
+									},
+								},
+							},
+							description: "List routing activity failure.",
+						},
+					},
+					summary: "List Routing Activity",
+					tags: ["Email"],
+				},
+			},
+			"/email/{worker}/sending": {
+				get: {
+					description:
+						"List outgoing (sending) email activity for a Worker, newest first.",
+					operationId: "email-list-sending-activity",
+					parameters: [
+						{
+							in: "path",
+							name: "worker",
+							required: true,
+							schema: { type: "string" },
+						},
+					],
+					responses: {
+						"200": {
+							content: {
+								"application/json": {
+									schema: {
+										allOf: [
+											{
+												$ref: "#/components/schemas/workers_api-response-common",
+											},
+											{
+												properties: {
+													result: {
+														type: "array",
+														items: {
+															$ref: "#/components/schemas/email_sending-activity-record",
+														},
+													},
+												},
+												type: "object",
+											},
+										],
+									},
+								},
+							},
+							description: "List sending activity response.",
+						},
+						"4XX": {
+							content: {
+								"application/json": {
+									schema: {
+										$ref: "#/components/schemas/workers_api-response-common-failure",
+									},
+								},
+							},
+							description: "List sending activity failure.",
+						},
+					},
+					summary: "List Sending Activity",
+					tags: ["Email"],
+				},
+			},
+			"/email/{worker}/messages/{id}": {
+				get: {
+					description: "Get a single email activity record by id.",
+					operationId: "email-get-message",
+					parameters: [
+						{
+							in: "path",
+							name: "worker",
+							required: true,
+							schema: { type: "string" },
+						},
+						{
+							in: "path",
+							name: "id",
+							required: true,
+							schema: { type: "string" },
+						},
+					],
+					responses: {
+						"200": {
+							content: {
+								"application/json": {
+									schema: {
+										allOf: [
+											{
+												$ref: "#/components/schemas/workers_api-response-common",
+											},
+											{
+												properties: {
+													result: {
+														oneOf: [
+															{
+																$ref: "#/components/schemas/email_routing-activity-record",
+															},
+															{
+																$ref: "#/components/schemas/email_sending-activity-record",
+															},
+														],
+													},
+												},
+												type: "object",
+											},
+										],
+									},
+								},
+							},
+							description: "Get message response.",
+						},
+						"4XX": {
+							content: {
+								"application/json": {
+									schema: {
+										$ref: "#/components/schemas/workers_api-response-common-failure",
+									},
+								},
+							},
+							description: "Get message failure.",
+						},
+					},
+					summary: "Get Email Message",
+					tags: ["Email"],
+				},
+			},
+			"/email/{worker}/raw": {
+				get: {
+					description:
+						"Get the raw RFC 5322 message for an email by its message id. Returns 404 when no raw body was stored (e.g. a forward event).",
+					operationId: "email-get-raw",
+					parameters: [
+						{
+							in: "path",
+							name: "worker",
+							required: true,
+							schema: { type: "string" },
+						},
+						{
+							in: "query",
+							name: "messageId",
+							required: true,
+							schema: { type: "string" },
+							description: "The message id of the email to fetch.",
+						},
+					],
+					responses: {
+						"200": {
+							content: {
+								"message/rfc822": {
+									schema: { type: "string" },
+								},
+							},
+							description: "The raw email message.",
+						},
+						"4XX": {
+							content: {
+								"application/json": {
+									schema: {
+										$ref: "#/components/schemas/workers_api-response-common-failure",
+									},
+								},
+							},
+							description: "Get raw email failure.",
+						},
+					},
+					summary: "Get Raw Email",
+					tags: ["Email"],
+				},
+			},
+			"/email/{worker}/send": {
+				post: {
+					description:
+						"Dispatch a test email to a Worker through the local inbound routing path.",
+					operationId: "email-send-test",
+					parameters: [
+						{
+							in: "path",
+							name: "worker",
+							required: true,
+							schema: { type: "string" },
+						},
+					],
+					requestBody: {
+						content: {
+							"application/json": {
+								schema: {
+									type: "object",
+									properties: {
+										raw: {
+											type: "string",
+											description:
+												"The complete RFC 5322 message. Capped at 1 MiB locally. The envelope MAIL FROM / RCPT TO addresses are derived from the message's From and To headers.",
+										},
+									},
+									required: ["raw"],
+								},
+							},
+						},
+						required: true,
+					},
+					responses: {
+						"200": {
+							content: {
+								"application/json": {
+									schema: {
+										allOf: [
+											{
+												$ref: "#/components/schemas/workers_api-response-common",
+											},
+											{
+												properties: {
+													result: {
+														type: "object",
+														properties: {
+															message: { type: "string" },
+														},
+														required: ["message"],
+													},
+												},
+												type: "object",
+											},
+										],
+									},
+								},
+							},
+							description: "Send test email response.",
+						},
+						"4XX": {
+							content: {
+								"application/json": {
+									schema: {
+										$ref: "#/components/schemas/workers_api-response-common-failure",
+									},
+								},
+							},
+							description: "Send test email failure.",
+						},
+					},
+					summary: "Send Test Email",
+					tags: ["Email"],
+				},
+			},
+			"/email/{worker}": {
+				delete: {
+					description: "Clear all email activity for a Worker.",
+					operationId: "email-delete-activity",
+					parameters: [
+						{
+							in: "path",
+							name: "worker",
+							required: true,
+							schema: { type: "string" },
+						},
+					],
+					responses: {
+						"200": {
+							content: {
+								"application/json": {
+									schema: {
+										allOf: [
+											{
+												$ref: "#/components/schemas/workers_api-response-common",
+											},
+											{
+												properties: {
+													result: {
+														type: "object",
+														properties: {
+															deleted: { type: "boolean" },
+														},
+														required: ["deleted"],
+													},
+												},
+												type: "object",
+											},
+										],
+									},
+								},
+							},
+							description: "Delete activity response.",
+						},
+						"4XX": {
+							content: {
+								"application/json": {
+									schema: {
+										$ref: "#/components/schemas/workers_api-response-common-failure",
+									},
+								},
+							},
+							description: "Delete activity failure.",
+						},
+					},
+					summary: "Delete Email Activity",
+					tags: ["Email"],
+				},
+			},
 		},
 		schemas: {
 			// R2 schemas - matches stratus dashboard API shapes
@@ -1525,6 +1870,38 @@ const config = {
 						},
 						description: "Workflow bindings",
 					},
+					email: {
+						$ref: "#/components/schemas/local-explorer_email-bindings",
+						description: "Email routing and sending capabilities",
+					},
+				},
+			},
+			"local-explorer_email-bindings": {
+				type: "object",
+				required: ["routing", "sending"],
+				description: "Email capabilities available for a worker",
+				properties: {
+					routing: {
+						type: "boolean",
+						description:
+							"Whether inbound (routing) email activity can be viewed. Always true — any worker can be an email route target locally.",
+					},
+					sending: {
+						type: "array",
+						items: {
+							type: "object",
+							required: ["bindingName"],
+							properties: {
+								bindingName: {
+									type: "string",
+									description:
+										"Name of the send_email binding in the worker's env.",
+								},
+							},
+						},
+						description:
+							"One entry per send_email binding declared on the worker. Empty when the worker cannot send email.",
+					},
 				},
 			},
 			"local-explorer_resource-binding": {
@@ -1715,6 +2092,105 @@ const config = {
 					},
 				},
 				required: ["id", "status"],
+			},
+			// Email activity records — a simplified, local-only view mirroring the
+			// production emailRoutingAdaptive / emailSendingAdaptive rows.
+			"email_routing-activity-record": {
+				type: "object",
+				description: "A single incoming (routing) email activity event.",
+				properties: {
+					id: { type: "string" },
+					datetime: {
+						type: "string",
+						description:
+							"ISO 8601 timestamp assigned when the event was recorded.",
+					},
+					direction: { type: "string", enum: ["routing"] },
+					from: { type: "string", description: "Envelope MAIL FROM address." },
+					to: { type: "string", description: "Envelope RCPT TO address." },
+					subject: { type: "string" },
+					action: {
+						type: "string",
+						enum: ["forward", "worker", "drop", "unknown"],
+						description:
+							"Routing action. `unknown` is a worker-initiated forward()/reply().",
+					},
+					worker: {
+						type: "string",
+						description: "Name of the Worker that handled the message.",
+					},
+					status: {
+						type: "string",
+						enum: ["delivered", "dropped", "deliveryFailed", "error"],
+					},
+					messageId: { type: "string" },
+					errorDetail: { type: "string" },
+					isNDR: {
+						type: "integer",
+						description: "0 | 1 — non-delivery report. Always 0 locally.",
+					},
+					isLastEvent: {
+						type: "integer",
+						description:
+							"0 | 1 — marks the terminal event of a message lifecycle.",
+					},
+				},
+				required: [
+					"id",
+					"datetime",
+					"direction",
+					"from",
+					"to",
+					"subject",
+					"action",
+					"worker",
+					"status",
+					"isNDR",
+					"isLastEvent",
+				],
+			},
+			"email_sending-activity-record": {
+				type: "object",
+				description:
+					"A single outgoing (sending) email activity event, one per recipient.",
+				properties: {
+					id: { type: "string" },
+					datetime: {
+						type: "string",
+						description:
+							"ISO 8601 timestamp assigned when the event was recorded.",
+					},
+					direction: { type: "string", enum: ["sending"] },
+					from: { type: "string" },
+					envelopeTos: {
+						type: "string",
+						description: "The single envelope recipient for this event.",
+					},
+					subject: { type: "string" },
+					status: { type: "string", enum: ["delivered", "error"] },
+					messageId: { type: "string" },
+					errorDetail: { type: "string" },
+					isNDR: {
+						type: "integer",
+						description: "0 | 1 — non-delivery report. Always 0 locally.",
+					},
+					isLastEvent: {
+						type: "integer",
+						description:
+							"0 | 1 — marks the terminal event of a message lifecycle.",
+					},
+				},
+				required: [
+					"id",
+					"datetime",
+					"direction",
+					"from",
+					"envelopeTos",
+					"subject",
+					"status",
+					"isNDR",
+					"isLastEvent",
+				],
 			},
 		},
 	},

@@ -2,9 +2,12 @@ import assert from "node:assert";
 import { $, blue, red, reset, yellow } from "kleur/colors";
 import { LogLevel, SharedHeaders } from "miniflare:shared";
 import PostalMime from "postal-mime";
+import { RAW_EMAIL } from "../email/constants";
+import { encodeBase64 } from "../email/mime";
 import { isEmailReplyable, validateReply } from "../email/validate";
 import { CoreBindings } from "./constants";
 import type { MiniflareEmailMessage } from "../email/email.worker";
+import type { EmailActivityInput, RoutingStatus } from "../email/types";
 import type { ForwardableEmailMessage } from "@cloudflare/workers-types/experimental";
 import type { Email } from "postal-mime";
 
@@ -22,12 +25,60 @@ function renderEmailHeaders(headers: Headers | undefined) {
 		: "";
 }
 
+/**
+ * Persists a batch of email activity events for the local explorer via the
+ * loopback endpoint (which assigns `id`/`datetime` and computes `isLastEvent`).
+ * Best-effort: failures are swallowed so activity logging never affects email
+ * handling.
+ */
+async function recordEmailActivity(
+	env: Env,
+	worker: string,
+	events: EmailActivityInput[]
+): Promise<void> {
+	if (events.length === 0) {
+		return;
+	}
+
+	try {
+		await env[CoreBindings.SERVICE_LOOPBACK].fetch(
+			`http://localhost/core/email-activity/${encodeURIComponent(worker)}`,
+			{
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify(events),
+			}
+		);
+	} catch {
+		// Activity logging is best-effort and must not affect email delivery.
+	}
+}
+
+/**
+ * Narrows a `reply()` argument to a raw `EmailMessage`. The builder-style
+ * overload (`EmailReplyMessageBuilder`) is not supported locally; a real
+ * `EmailMessage` is distinguished by carrying the raw-email stream.
+ */
+function assertIsMiniflareEmailMessage(
+	message: unknown
+): asserts message is MiniflareEmailMessage {
+	assert(
+		typeof message === "object" && message !== null && RAW_EMAIL in message,
+		"EmailReplyMessageBuilder is not currently supported"
+	);
+}
+
 export async function handleEmail(
 	params: URLSearchParams,
 	request: Request,
 	service: Fetcher,
 	env: Env,
-	ctx: ExecutionContext
+	ctx: ExecutionContext,
+	/**
+	 * Name of the Worker handling this email, used to scope the local explorer
+	 * activity log. When omitted, activity is not recorded.
+	 */
+	worker?: string
 ): Promise<Response> {
 	// Turn an HTTP request into an EmailMessage, using:
 	//  - `from` and `to` from the URL
@@ -122,109 +173,216 @@ export async function handleEmail(
 	// Propogate `.setReject()` reasons to the caller
 	let maybeClientError: string | undefined = undefined;
 
-	// @ts-expect-error .email is not in the `Fetcher` but it's a valid RPC call.
-	await service.email(
-		// Construct a ForwardableEmailMessage-like object. We need
-		// - ForwardableEmailMessage to be able to be passed across JSRPC (to support e.g. userWorker.email(ForwardableEmailMessage))
-		// - ForwardableEmailMessage properties to be synchronously available (to match production). This rules out a class extending `RpcStub`
-		// However, unlike EmailMessage (see email.worker.ts) it doesn't need to be user-constructable, and so we can just use an object with `satisfies`
-		{
-			from,
-			to,
-			raw: clonedRequest.body,
-			rawSize: incomingEmailRaw.byteLength,
-			headers: incomingEmailHeaders,
-			setReject: (reason: string): void => {
-				ctx.waitUntil(
-					env[CoreBindings.SERVICE_LOOPBACK].fetch(
+	// Collected worker-initiated events for the local explorer activity log.
+	// Each `forward()` shares the incoming message's id; each `reply()` is a new
+	// message with its own id.
+	const incomingMessageId = parsedIncomingEmail.messageId;
+	const incomingSubject = parsedIncomingEmail.subject ?? "";
+	// We only need the count of forwards: every forward row keeps the original
+	// incoming envelope recipient as its `to` (the forward destination lives in
+	// the console log, not the local activity record).
+	let forwardCount = 0;
+	const replyEvents: { to: string; messageId: string; rawBase64: string }[] =
+		[];
+	let handlerError: string | undefined = undefined;
+
+	try {
+		// @ts-expect-error .email is not in the `Fetcher` but it's a valid RPC call.
+		await service.email(
+			// Construct a ForwardableEmailMessage-like object. We need
+			// - ForwardableEmailMessage to be able to be passed across JSRPC (to support e.g. userWorker.email(ForwardableEmailMessage))
+			// - ForwardableEmailMessage properties to be synchronously available (to match production). This rules out a class extending `RpcStub`
+			// However, unlike EmailMessage (see email.worker.ts) it doesn't need to be user-constructable, and so we can just use an object with `satisfies`
+			{
+				from,
+				to,
+				raw: clonedRequest.body,
+				rawSize: incomingEmailRaw.byteLength,
+				headers: incomingEmailHeaders,
+				setReject: (reason: string): void => {
+					ctx.waitUntil(
+						env[CoreBindings.SERVICE_LOOPBACK].fetch(
+							"http://localhost/core/log",
+							{
+								method: "POST",
+								headers: {
+									[SharedHeaders.LOG_LEVEL]: LogLevel.ERROR.toString(),
+								},
+								body: `${red("Email handler rejected message")}${reset(` with the following reason: "${reason}"`)}`,
+							}
+						)
+					);
+					maybeClientError = reason;
+				},
+				forward: async (
+					rcptTo: string,
+					headers?: Headers
+				): Promise<EmailSendResult> => {
+					await env[CoreBindings.SERVICE_LOOPBACK].fetch(
 						"http://localhost/core/log",
 						{
 							method: "POST",
-							headers: { [SharedHeaders.LOG_LEVEL]: LogLevel.ERROR.toString() },
-							body: `${red("Email handler rejected message")}${reset(` with the following reason: "${reason}"`)}`,
+							headers: { [SharedHeaders.LOG_LEVEL]: LogLevel.INFO.toString() },
+							body: `${blue("Email handler forwarded message")}${reset(` with\n  rcptTo: ${rcptTo}${renderEmailHeaders(headers)}`)}`,
 						}
-					)
-				);
-				maybeClientError = reason;
-			},
-			forward: async (
-				rcptTo: string,
-				headers?: Headers
-			): Promise<EmailSendResult> => {
-				await env[CoreBindings.SERVICE_LOOPBACK].fetch(
-					"http://localhost/core/log",
-					{
-						method: "POST",
-						headers: { [SharedHeaders.LOG_LEVEL]: LogLevel.INFO.toString() },
-						body: `${blue("Email handler forwarded message")}${reset(` with\n  rcptTo: ${rcptTo}${renderEmailHeaders(headers)}`)}`,
-					}
-				);
-				/**
-				 * The message ID in production is a 36 character random string that identifies the message for e.g. linking up threads.
-				 * In production it uses the sender domain rather than example.com. Locally, we have access to none of that information
-				 * so instead we make a dummy message ID that matches the production format (36 characters followed by a domain)
-				 */
-				const uuid = crypto.randomUUID().replaceAll("-", "");
-				return { messageId: `${uuid}@example.com` };
-			},
-			reply: async (replyMessage): Promise<EmailSendResult> => {
-				assert(
-					"from" in replyMessage && "to" in replyMessage,
-					"EmailReplyMessageBuilder is not currently supported"
-				);
+					);
+					// Each forward is a distinct delivery event sharing the incoming
+					// message's id (matches production `emailRoutingAdaptive`).
+					forwardCount++;
+					/**
+					 * The message ID in production is a 36 character random string that identifies the message for e.g. linking up threads.
+					 * In production it uses the sender domain rather than example.com. Locally, we have access to none of that information
+					 * so instead we make a dummy message ID that matches the production format (36 characters followed by a domain)
+					 */
+					const uuid = crypto.randomUUID().replaceAll("-", "");
+					return { messageId: `${uuid}@example.com` };
+				},
+				reply: async (replyMessage): Promise<EmailSendResult> => {
+					assertIsMiniflareEmailMessage(replyMessage);
 
-				if (
-					!(await isEmailReplyable(
+					if (
+						!(await isEmailReplyable(
+							parsedIncomingEmail,
+							incomingEmailHeaders,
+							async (msg) =>
+								void (await env[CoreBindings.SERVICE_LOOPBACK].fetch(
+									"http://localhost/core/log",
+									{
+										method: "POST",
+										headers: {
+											[SharedHeaders.LOG_LEVEL]: LogLevel.ERROR.toString(),
+										},
+										body: msg,
+									}
+								))
+						))
+					) {
+						throw new Error("Original email is not replyable");
+					}
+					const finalReply = await validateReply(
 						parsedIncomingEmail,
-						incomingEmailHeaders,
-						async (msg) =>
-							void (await env[CoreBindings.SERVICE_LOOPBACK].fetch(
-								"http://localhost/core/log",
-								{
-									method: "POST",
-									headers: {
-										[SharedHeaders.LOG_LEVEL]: LogLevel.ERROR.toString(),
-									},
-									body: msg,
-								}
-							))
-					))
-				) {
-					throw new Error("Original email is not replyable");
-				}
-				const finalReply = await validateReply(
-					parsedIncomingEmail,
-					replyMessage as MiniflareEmailMessage
-				);
+						replyMessage
+					);
 
-				const resp = await env[CoreBindings.SERVICE_LOOPBACK].fetch(
-					"http://localhost/core/store-temp-file?extension=eml&prefix=email",
-					{
-						method: "POST",
-						body: finalReply,
-					}
-				);
-				const file = await resp.text();
+					const finalReplyRaw = new Uint8Array(
+						await new Response(finalReply).arrayBuffer()
+					);
 
-				await env[CoreBindings.SERVICE_LOOPBACK].fetch(
-					"http://localhost/core/log",
-					{
-						method: "POST",
-						headers: { [SharedHeaders.LOG_LEVEL]: LogLevel.INFO.toString() },
-						body: `${blue("Email handler replied to sender")}${reset(` with the following message:\n  ${file}`)}`,
-					}
-				);
+					const resp = await env[CoreBindings.SERVICE_LOOPBACK].fetch(
+						"http://localhost/core/store-temp-file?extension=eml&prefix=email",
+						{
+							method: "POST",
+							body: finalReplyRaw,
+						}
+					);
+					const file = await resp.text();
 
-				/**
-				 * The message ID in production is a 36 character random string that identifies the message for e.g. linking up threads.
-				 * In production it uses the sender domain rather than example.com. Locally, we have access to none of that information
-				 * so instead we make a dummy message ID that matches the production format (36 characters followed by a domain)
-				 */
-				const uuid = crypto.randomUUID().replaceAll("-", "");
-				return { messageId: `${uuid}@example.com` };
-			},
-		} satisfies ForwardableEmailMessage
-	);
+					await env[CoreBindings.SERVICE_LOOPBACK].fetch(
+						"http://localhost/core/log",
+						{
+							method: "POST",
+							headers: { [SharedHeaders.LOG_LEVEL]: LogLevel.INFO.toString() },
+							body: `${blue("Email handler replied to sender")}${reset(` with the following message:\n  ${file}`)}`,
+						}
+					);
+
+					/**
+					 * The message ID in production is a 36 character random string that identifies the message for e.g. linking up threads.
+					 * In production it uses the sender domain rather than example.com. Locally, we have access to none of that information
+					 * so instead we make a dummy message ID that matches the production format (36 characters followed by a domain)
+					 */
+					const uuid = crypto.randomUUID().replaceAll("-", "");
+					const replyMessageId = `${uuid}@example.com`;
+					// A reply is a new outbound message with its own id, delivered
+					// back to the original sender.
+					replyEvents.push({
+						to: parsedIncomingEmail.from.address ?? from,
+						messageId: replyMessageId,
+						rawBase64: encodeBase64(finalReplyRaw),
+					});
+					return { messageId: replyMessageId };
+				},
+			} satisfies ForwardableEmailMessage
+		);
+	} catch (e) {
+		handlerError = e instanceof Error ? e.message : String(e);
+	}
+
+	// Record activity for the local explorer, mirroring the production
+	// `emailRoutingAdaptive` schema: one row for the worker's handling outcome,
+	// one row per forward (sharing the incoming message id), and one row per
+	// reply (each a new message id).
+	if (worker !== undefined) {
+		const events: EmailActivityInput[] = [];
+
+		// The worker-handling row. Its status reflects how the worker disposed
+		// of the incoming message.
+		let workerStatus: RoutingStatus;
+		if (handlerError !== undefined) {
+			workerStatus = "error";
+		} else if (maybeClientError !== undefined) {
+			workerStatus = "deliveryFailed";
+		} else {
+			workerStatus = "dropped";
+		}
+		events.push({
+			direction: "routing",
+			action: "worker",
+			worker,
+			messageId: incomingMessageId,
+			from,
+			to,
+			subject: incomingSubject,
+			status: workerStatus,
+			errorDetail: handlerError ?? maybeClientError,
+			isNDR: 0,
+			isLastEvent: 0,
+			rawBase64: encodeBase64(incomingEmailRaw),
+		});
+
+		// One delivered row per forward, sharing the incoming message id. Each
+		// keeps the original incoming envelope recipient as its `to`.
+		for (let i = 0; i < forwardCount; i++) {
+			events.push({
+				direction: "routing",
+				action: "unknown",
+				worker,
+				messageId: incomingMessageId,
+				from,
+				to,
+				subject: incomingSubject,
+				status: "delivered",
+				isNDR: 0,
+				isLastEvent: 0,
+			});
+		}
+
+		// One delivered row per reply, each a new outbound message id.
+		for (const replyEvent of replyEvents) {
+			events.push({
+				direction: "routing",
+				action: "unknown",
+				worker,
+				messageId: replyEvent.messageId,
+				from: to,
+				to: replyEvent.to,
+				subject: incomingSubject,
+				status: "delivered",
+				isNDR: 0,
+				isLastEvent: 0,
+				rawBase64: replyEvent.rawBase64,
+			});
+		}
+
+		ctx.waitUntil(recordEmailActivity(env, worker, events));
+	}
+
+	if (handlerError !== undefined) {
+		return new Response(
+			`Worker threw an error while processing email: ${handlerError}`,
+			{ status: 500 }
+		);
+	}
 
 	if (maybeClientError !== undefined) {
 		return new Response(

@@ -1,9 +1,16 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
 import { blue } from "kleur/colors";
 import PostalMime from "postal-mime";
+import { CoreBindings } from "../core/constants";
 import { RAW_EMAIL } from "./constants";
 import { type MiniflareEmailMessage as EmailMessage } from "./email.worker";
-import type { EmailAddress, MessageBuilder } from "./types";
+import {
+	encodeBase64,
+	extractEmailAddress,
+	formatEmailAddress,
+	renderSendingEml,
+} from "./mime";
+import type { EmailActivityInput, MessageBuilder } from "./types";
 import type { Email } from "postal-mime";
 
 /**
@@ -19,29 +26,6 @@ function synthesizeMessageId(senderEmail: string): string {
 	const id = Array.from(bytes, (b) => alphabet[b % alphabet.length]).join("");
 	const domain = senderEmail.slice(senderEmail.lastIndexOf("@") + 1);
 	return `<${id}@${domain}>`;
-}
-
-/**
- * Extracts the bare email address from a string (which may be in
- * `"Name" <address>` or plain address format) or EmailAddress object.
- */
-function extractEmailAddress(addr: string | EmailAddress): string {
-	if (typeof addr !== "string") {
-		return addr.email;
-	}
-	// Match "Name" <address> or Name <address> or just address
-	const match = addr.match(/<([^>]+)>$/);
-	return match ? match[1].trim() : addr.trim();
-}
-
-/**
- * Formats an email address for display
- */
-function formatEmailAddress(addr: string | EmailAddress): string {
-	if (typeof addr === "string") {
-		return addr;
-	}
-	return `"${addr.name}" <${addr.email}>`;
 }
 
 /**
@@ -82,7 +66,10 @@ function joinPath(base: string, ...segments: string[]): string {
 
 interface SendEmailEnv {
 	MINIFLARE_EMAIL_DISK: Fetcher;
+	[CoreBindings.SERVICE_LOOPBACK]: Fetcher;
 	email_directory: string;
+	/** Name of the Worker owning this binding, for the activity log. */
+	MINIFLARE_EMAIL_WORKER_NAME: string;
 	destination_address: string | undefined;
 	allowed_destination_addresses: string[] | undefined;
 	allowed_sender_addresses: string[] | undefined;
@@ -187,7 +174,104 @@ export class SendEmailBinding extends WorkerEntrypoint<SendEmailEnv> {
 		this.validateRecipients(toEmails);
 	}
 
+	/** All envelope recipients (to + cc + bcc) as bare addresses. */
+	private allRecipients(builder: MessageBuilder): string[] {
+		const collect = (
+			value: MessageBuilder["to"] | MessageBuilder["cc"] | undefined
+		): string[] => {
+			if (value === undefined) {
+				return [];
+			}
+			const array = Array.isArray(value) ? value : [value];
+			return array.map((addr) => extractEmailAddress(addr));
+		};
+		return [
+			...collect(builder.to),
+			...collect(builder.cc),
+			...collect(builder.bcc),
+		];
+	}
+
+	/**
+	 * Persists sending activity for the local explorer, best-effort. Emits one
+	 * `delivered` row per envelope recipient, all sharing the message id; the
+	 * raw `.eml` is attached to the first row only (it's stored once, keyed by
+	 * message id).
+	 */
+	private async recordSending(events: EmailActivityInput[]): Promise<void> {
+		if (events.length === 0) {
+			return;
+		}
+		try {
+			await this.env[CoreBindings.SERVICE_LOOPBACK].fetch(
+				`http://localhost/core/email-activity/${encodeURIComponent(this.env.MINIFLARE_EMAIL_WORKER_NAME)}`,
+				{
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify(events),
+				}
+			);
+		} catch {
+			// Activity logging must never affect email sending.
+		}
+	}
+
+	private buildDeliveredEvents(details: {
+		from: string;
+		subject: string;
+		messageId: string;
+		recipients: string[];
+		rawBase64: string;
+	}): EmailActivityInput[] {
+		return details.recipients.map((recipient, index) => ({
+			direction: "sending",
+			envelopeTos: recipient,
+			from: details.from,
+			subject: details.subject,
+			messageId: details.messageId,
+			status: "delivered",
+			isNDR: 0,
+			isLastEvent: 0,
+			// Store the raw once (keyed by message id) via the first row.
+			rawBase64: index === 0 ? details.rawBase64 : undefined,
+		}));
+	}
+
 	async send(
+		emailMessageOrBuilder: EmailMessage | MessageBuilder
+	): Promise<EmailSendResult> {
+		try {
+			return await this.doSend(emailMessageOrBuilder);
+		} catch (e) {
+			const errorDetail = e instanceof Error ? e.message : String(e);
+			// Best-effort: describe the rejected message for the activity log.
+			const isRaw = this.isEmailMessage(emailMessageOrBuilder);
+			const from = isRaw
+				? emailMessageOrBuilder.from
+				: extractEmailAddress(emailMessageOrBuilder.from);
+			const recipients = isRaw
+				? Array.isArray(emailMessageOrBuilder.to)
+					? emailMessageOrBuilder.to
+					: [emailMessageOrBuilder.to]
+				: this.allRecipients(emailMessageOrBuilder);
+			const subject = isRaw ? "" : emailMessageOrBuilder.subject;
+			await this.recordSending([
+				{
+					direction: "sending",
+					envelopeTos: recipients[0] ?? "",
+					from,
+					subject,
+					status: "error",
+					errorDetail,
+					isNDR: 0,
+					isLastEvent: 0,
+				},
+			]);
+			throw e;
+		}
+	}
+
+	private async doSend(
 		emailMessageOrBuilder: EmailMessage | MessageBuilder
 	): Promise<EmailSendResult> {
 		// Check if this is an EmailMessage (has RAW_EMAIL symbol) or MessageBuilder
@@ -239,7 +323,20 @@ export class SendEmailBinding extends WorkerEntrypoint<SendEmailEnv> {
 				`${blue("send_email binding called with the following message:")}\n  ${file}`
 			);
 
-			return { messageId: synthesizeMessageId(emailMessage.from) };
+			const messageId = synthesizeMessageId(emailMessage.from);
+			await this.recordSending(
+				this.buildDeliveredEvents({
+					from: emailMessage.from,
+					subject: parsedEmail.subject ?? "",
+					messageId,
+					recipients: Array.isArray(emailMessage.to)
+						? emailMessage.to
+						: [emailMessage.to],
+					rawBase64: encodeBase64(rawEmailBuffer),
+				})
+			);
+
+			return { messageId };
 		} else {
 			// New MessageBuilder API - just validate and log
 			const builder = emailMessageOrBuilder;
@@ -293,9 +390,20 @@ export class SendEmailBinding extends WorkerEntrypoint<SendEmailEnv> {
 				`${blue("send_email binding called with MessageBuilder:")}\n${formatted}${fileInfo}`
 			);
 
-			return {
-				messageId: synthesizeMessageId(extractEmailAddress(builder.from)),
-			};
+			const messageId = synthesizeMessageId(extractEmailAddress(builder.from));
+			await this.recordSending(
+				this.buildDeliveredEvents({
+					from: extractEmailAddress(builder.from),
+					subject: builder.subject,
+					messageId,
+					recipients: this.allRecipients(builder),
+					// Synthesize a previewable `.eml` since the MessageBuilder path
+					// has no real raw message.
+					rawBase64: encodeBase64(renderSendingEml(builder, messageId)),
+				})
+			);
+
+			return { messageId };
 		}
 	}
 }

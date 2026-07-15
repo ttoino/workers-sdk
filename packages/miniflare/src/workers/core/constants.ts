@@ -59,6 +59,9 @@ export const CoreBindings = {
 	SERVICE_LOOPBACK: "MINIFLARE_LOOPBACK",
 	SERVICE_USER_ROUTE_PREFIX: "MINIFLARE_USER_ROUTE_",
 	SERVICE_USER_FALLBACK: "MINIFLARE_USER_FALLBACK",
+	// Plain name of the fallback (default) Worker, so the entry Worker can
+	// attribute activity (e.g. email routing) when no route matches.
+	JSON_FALLBACK_WORKER_NAME: "MINIFLARE_FALLBACK_WORKER_NAME",
 	TEXT_CUSTOM_SERVICE: "MINIFLARE_CUSTOM_SERVICE",
 	// Backs the Images binding (`env.IMAGES`) — see imagesLocalFetcher.
 	IMAGES_BINDING_SERVICE: "MINIFLARE_IMAGES_BINDING_SERVICE",
@@ -77,6 +80,9 @@ export const CoreBindings = {
 	STRIP_DISABLE_PRETTY_ERROR: "STRIP_DISABLE_PRETTY_ERROR",
 	SERVICE_LOCAL_EXPLORER: "MINIFLARE_LOCAL_EXPLORER",
 	EXPLORER_DISK: "MINIFLARE_EXPLORER_DISK",
+	// Entry service binding for the local explorer, used to dispatch test emails
+	// through the normal inbound routing path (`/cdn-cgi/handler/email`).
+	EXPLORER_ENTRY_SERVICE: "MINIFLARE_EXPLORER_ENTRY_SERVICE",
 	JSON_LOCAL_EXPLORER_BINDING_MAP: "LOCAL_EXPLORER_BINDING_MAP",
 	JSON_LOCAL_EXPLORER_WORKER_NAMES: "LOCAL_EXPLORER_WORKER_NAMES",
 	JSON_EXPLORER_WORKER_OPTS: "MINIFLARE_EXPLORER_WORKER_OPTS",

@@ -10,6 +10,7 @@ import { useRouter } from "@tanstack/react-router";
 import { useCallback, useState } from "react";
 import D1Icon from "../assets/icons/d1.svg?react";
 import DOIcon from "../assets/icons/durable-objects.svg?react";
+import EmailIcon from "../assets/icons/email.svg?react";
 import KVIcon from "../assets/icons/kv.svg?react";
 import R2Icon from "../assets/icons/r2.svg?react";
 import WorkflowsIcon from "../assets/icons/workflows.svg?react";
@@ -87,6 +88,39 @@ export function AppSidebar({
 	const kvNamespaces = bindings?.kv ?? [];
 	const r2Buckets = bindings?.r2 ?? [];
 	const workflows = bindings?.workflows ?? [];
+
+	// Routing (inbound) activity is available for every Worker; Sending only
+	// appears when the Worker declares `send_email` bindings.
+	const emailItems = [
+		{
+			id: "routing",
+			isActive:
+				currentPath === "/email/routing" ||
+				currentPath.startsWith("/email/routing/"),
+			label: "Routing",
+			link: {
+				params: {},
+				search: workerSearch,
+				to: "/email/routing" as const,
+			},
+		},
+		...((bindings?.email?.sending ?? []).length > 0
+			? [
+					{
+						id: "sending",
+						isActive:
+							currentPath === "/email/sending" ||
+							currentPath.startsWith("/email/sending/"),
+						label: "Sending",
+						link: {
+							params: {},
+							search: workerSearch,
+							to: "/email/sending" as const,
+						},
+					},
+				]
+			: []),
+	];
 
 	const sidebarItemGroups = [
 		{
@@ -174,6 +208,13 @@ export function AppSidebar({
 				},
 			})),
 			title: "Workflows",
+		},
+		{
+			emptyLabel: "No email activity",
+			groupId: "email" as const,
+			icon: EmailIcon,
+			items: emailItems,
+			title: "Email",
 		},
 	] satisfies Array<{
 		emptyLabel: string;

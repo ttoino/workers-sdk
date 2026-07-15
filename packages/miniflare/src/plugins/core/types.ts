@@ -51,6 +51,15 @@ export type WorkerResourceBindings = {
 		className: string;
 		scriptName: string;
 	}[];
+	email: {
+		/**
+		 * Routing (incoming) activity is available for every Worker, since any
+		 * Worker can be the target of an email route locally.
+		 */
+		routing: boolean;
+		/** One entry per `send_email` binding declared on this Worker. */
+		sending: { bindingName: string }[];
+	};
 };
 
 export type ExplorerWorkerOpts = Record<string, WorkerResourceBindings>;

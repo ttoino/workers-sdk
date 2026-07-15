@@ -35,6 +35,7 @@ import {
 	BROWSER_RENDERING_PLUGIN_NAME,
 	D1_PLUGIN_NAME,
 	DURABLE_OBJECTS_PLUGIN_NAME,
+	EMAIL_PLUGIN_NAME,
 	FLAGSHIP_PLUGIN_NAME,
 	getDirectSocketName,
 	getDurableObjectUniqueKey,
@@ -148,6 +149,10 @@ import type {
 } from "./runtime";
 import type { Log } from "./shared";
 import type { WorkerDefinition } from "./shared/dev-registry-types";
+import type {
+	EmailActivityInput,
+	EmailActivityRecord,
+} from "./workers/email/types";
 import type {
 	CacheStorage,
 	D1Database,
@@ -1504,6 +1509,192 @@ export class Miniflare {
 		return new Response("OK", { status: 200 });
 	}
 
+	/**
+	 * Backs the local explorer's email activity log. Activity is scoped per
+	 * Worker and persisted to disk (surviving restarts when `--persist-to` /
+	 * `defaultPersistRoot` is set). Raw `.eml` bodies are stored separately,
+	 * keyed by a hash of their `messageId`, and fetched on demand by the preview.
+	 *
+	 * URL shapes (all under `/core/email-activity/<worker>`):
+	 *  - `POST   /core/email-activity/<worker>`            append a batch of events
+	 *  - `GET    /core/email-activity/<worker>`            list events (newest first)
+	 *  - `GET    /core/email-activity/<worker>/records/<id>` a single event
+	 *  - `GET    /core/email-activity/<worker>/raw/<hash>` a raw `.eml` (404 if none)
+	 *  - `DELETE /core/email-activity/<worker>`            clear all events
+	 */
+	async #handleLoopbackEmailActivityRequest(
+		request: Request,
+		url: URL
+	): Promise<Response> {
+		const segments = url.pathname
+			.slice("/core/email-activity/".length)
+			.split("/")
+			.filter((s) => s.length > 0)
+			.map((s) => decodeURIComponent(s));
+
+		const worker = segments[0];
+		if (!worker) {
+			return new Response("Worker name is required", { status: 400 });
+		}
+
+		const coreSharedOpts = this.#sharedOpts.core;
+		const persistPath = getPersistPath(
+			EMAIL_PLUGIN_NAME,
+			this.#tmpPath,
+			coreSharedOpts.defaultPersistRoot,
+			undefined
+		);
+		const activityRoot = path.join(persistPath, "activity");
+		const workerBase = path.join(activityRoot, worker);
+
+		// Prevent directory traversal through a crafted worker name.
+		if (
+			!path
+				.resolve(workerBase)
+				.startsWith(path.resolve(activityRoot) + path.sep)
+		) {
+			return new Response("Invalid worker name", { status: 400 });
+		}
+
+		const recordsDir = path.join(workerBase, "records");
+		const rawDir = path.join(workerBase, "raw");
+		const subResource = segments[1];
+
+		// GET /core/email-activity/<worker>/raw/<messageId>
+		// The raw `.eml` is stored keyed by a hash of the message id, computed
+		// here so callers only need to pass the (url-encoded) message id.
+		if (subResource === "raw" && request.method === "GET") {
+			const messageId = segments[2];
+			if (!messageId) {
+				return new Response("Message id is required", { status: 400 });
+			}
+			const hash = crypto.createHash("sha256").update(messageId).digest("hex");
+			try {
+				const raw = await fs.promises.readFile(
+					path.join(rawDir, `${hash}.eml`)
+				);
+				return new Response(raw, {
+					status: 200,
+					headers: { "Content-Type": "message/rfc822" },
+				});
+			} catch (e) {
+				if (isFileNotFoundError(e)) {
+					return new Response("Not Found", { status: 404 });
+				}
+				throw e;
+			}
+		}
+
+		// GET /core/email-activity/<worker>/records/<id>
+		if (subResource === "records" && request.method === "GET") {
+			const id = segments[2];
+			if (!id || !/^[a-zA-Z0-9-]+$/.test(id)) {
+				return new Response("Invalid record id", { status: 400 });
+			}
+			try {
+				const contents = await fs.promises.readFile(
+					path.join(recordsDir, `${id}.json`),
+					"utf8"
+				);
+				return new Response(contents, {
+					status: 200,
+					headers: { "Content-Type": "application/json" },
+				});
+			} catch (e) {
+				if (isFileNotFoundError(e)) {
+					return new Response("Not Found", { status: 404 });
+				}
+				throw e;
+			}
+		}
+
+		// POST /core/email-activity/<worker>
+		if (request.method === "POST") {
+			const events = (await request.json()) as EmailActivityInput[];
+			await mkdir(recordsDir, { recursive: true });
+			await mkdir(rawDir, { recursive: true });
+
+			// All events for a given message arrive in a single batch (one
+			// routing `handleEmail` call, or one sending `send()` call), so we can
+			// mark the terminal event of each `messageId` group here.
+			const lastIndexByMessage = new Map<string, number>();
+			events.forEach((event, index) => {
+				if (event.messageId !== undefined) {
+					lastIndexByMessage.set(event.messageId, index);
+				}
+			});
+
+			await Promise.all(
+				events.map(async ({ rawBase64, ...event }, index) => {
+					const id = crypto.randomUUID();
+					const record = {
+						...event,
+						isLastEvent:
+							event.messageId !== undefined &&
+							lastIndexByMessage.get(event.messageId) === index
+								? 1
+								: 0,
+						id,
+						datetime: new Date().toISOString(),
+					} as EmailActivityRecord;
+
+					if (rawBase64 !== undefined && event.messageId !== undefined) {
+						const hash = crypto
+							.createHash("sha256")
+							.update(event.messageId)
+							.digest("hex");
+						await writeFile(
+							path.join(rawDir, `${hash}.eml`),
+							Buffer.from(rawBase64, "base64")
+						);
+					}
+
+					await writeFile(
+						path.join(recordsDir, `${id}.json`),
+						JSON.stringify(record)
+					);
+				})
+			);
+
+			return new Response("OK", { status: 200 });
+		}
+
+		// GET /core/email-activity/<worker>
+		if (request.method === "GET") {
+			let fileNames: string[];
+			try {
+				fileNames = await fs.promises.readdir(recordsDir);
+			} catch (e) {
+				if (isFileNotFoundError(e)) {
+					return Response.json([]);
+				}
+				throw e;
+			}
+			const records = await Promise.all(
+				fileNames
+					.filter((name) => name.endsWith(".json"))
+					.map(async (name) => {
+						const contents = await fs.promises.readFile(
+							path.join(recordsDir, name),
+							"utf8"
+						);
+						return JSON.parse(contents) as EmailActivityRecord;
+					})
+			);
+			// Newest first.
+			records.sort((a, b) => b.datetime.localeCompare(a.datetime));
+			return Response.json(records);
+		}
+
+		// DELETE /core/email-activity/<worker>
+		if (request.method === "DELETE") {
+			await fs.promises.rm(workerBase, { recursive: true, force: true });
+			return new Response("OK", { status: 200 });
+		}
+
+		return new Response("Method Not Allowed", { status: 405 });
+	}
+
 	get #workerSrcOpts(): NameSourceOptions[] {
 		return this.#workerOpts.map<NameSourceOptions>(({ core }) => core);
 	}
@@ -1662,6 +1853,8 @@ export class Miniflare {
 				);
 				await writeFile(filePath, await request.text());
 				response = new Response(filePath, { status: 200 });
+			} else if (url.pathname.startsWith("/core/email-activity/")) {
+				response = await this.#handleLoopbackEmailActivityRequest(request, url);
 			} else if (url.pathname.startsWith("/core/do-storage/")) {
 				response = await this.#handleLoopbackDOStorageRequest(url);
 			} else if (url.pathname.startsWith("/core/workflow-storage/")) {
@@ -2360,6 +2553,7 @@ export class Miniflare {
 				)
 					? `${RPC_PROXY_SERVICE_NAME}:${this.#workerOpts[0].core.name}`
 					: getUserServiceName(this.#workerOpts[0].core.name),
+			defaultWorkerName: this.#workerOpts[0].core.name,
 			loopbackPort,
 			tmpPath: this.#tmpPath,
 			log: this.#log,

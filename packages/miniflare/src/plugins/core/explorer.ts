@@ -17,6 +17,7 @@ import {
 import {
 	getUserServiceName,
 	LOCAL_EXPLORER_DISK,
+	SERVICE_ENTRY,
 	SERVICE_LOCAL_EXPLORER,
 } from "./constants";
 import type { PluginWorkerOptions } from "..";
@@ -72,6 +73,12 @@ export function getExplorerServices(
 		// - /core/dev-registry for cross-instance aggregation
 		// - /core/do-storage for using DO storage to list objects
 		WORKER_BINDING_SERVICE_LOOPBACK,
+		// Entry service, used to dispatch test emails through the inbound routing
+		// path so they exercise the real email handler and activity logging.
+		{
+			name: CoreBindings.EXPLORER_ENTRY_SERVICE,
+			service: { name: SERVICE_ENTRY },
+		},
 		// Worker names for this instance, used to filter self from registry during aggregation
 		{
 			name: CoreBindings.JSON_LOCAL_EXPLORER_WORKER_NAMES,
@@ -295,6 +302,9 @@ export function constructExplorerWorkerOpts(
 			r2: [],
 			do: [],
 			workflows: [],
+			// Routing activity is surfaced for every Worker; sending is populated
+			// below only when the Worker declares `send_email` bindings.
+			email: { routing: true, sending: [] },
 		};
 
 		for (const [bindingName, ns] of namespaceEntries(
@@ -345,6 +355,10 @@ export function constructExplorerWorkerOpts(
 				className: workflow.className,
 				scriptName: workflow.scriptName ?? workerName,
 			});
+		}
+
+		for (const { name } of workerOpts.email.email?.send_email ?? []) {
+			bindings.email.sending.push({ bindingName: name });
 		}
 
 		result[workerName] = bindings;
